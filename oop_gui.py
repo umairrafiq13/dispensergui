@@ -1,4 +1,3 @@
-#libraries needed to cleaned
 import tkinter as tk
 import datetime
 import os
@@ -13,19 +12,20 @@ import http.client, urllib
 import pandas  as pd
 import minimalmodbus,serial
 import struct
-import time
-#initializing modbus
+from time  import sleep
+from time import clock
+import RPi.GPIO as gpio
 
+#initializing pins
+gpio.setwarnings(False)
+gpio.setmode(gpio.BCM)
+gpio.setup(2, gpio.OUT, initial = gpio.LOW)
+gpio.setup(3, gpio.OUT, initial = gpio.LOW)
+gpio.setup(4, gpio.OUT, initial = gpio.LOW)
+gpio.setup(14, gpio.OUT, initial = gpio.LOW)
+#initializig modbus
 minimalmodbus.CLOSE_PORT_AFTER_EACH_CALL=True
-instrument = minimalmodbus.Instrument('/dev/ttyUSB0', 1) 
-instrument.serial.baudrate = 9600
-instrument.serial.timeout = 1 
-instrument.serial.bytesize = 8
-instrument.serial.parity   = serial.PARITY_NONE
-instrument.serial.stopbits = 1
-instrument.serial.timeout  = 0.05   
-instrument.mode = minimalmodbus.MODE_RTU
-instrument.debug = False
+
 
 xxLARGE_FONT = ("Verdana" , 130)
 xLARGE_FONT = ("Verdana" , 100)
@@ -41,8 +41,15 @@ rate = 55.81
 unit = '/KG'
 total = 0 #totalizer gas modbus call
 amount = 0
+stop_bit = 1
+c_bit =0
+total_check= 0
 
+#valve rate
+valve_bit = 0
+valve_change_rate = 10.00
 filepath = "/home/pi/Desktop/dispenser/logs/"
+ltrfactor = 1.00
 
 key = "EEPNQLIC6COE2UCH"
 bit = 0
@@ -50,7 +57,48 @@ bit = 0
 mng_pass = '1234'
 rt_pass = '5678'
 master_keys = '0000'
+cfrm_pass = ''
+ini_ps = ''
+def raise_error():
+    error = tk.Tk()
+    error.wm_title("WARNING")
+    error.wm_geometry("600x100+120+120")
+    label = tk.Label(error , text = "Communication Error", fg= "red", font = LARGE_FONT)
+    label.pack()
+    button = tk.Button(error , text= "OK", command =lambda : [error.quit(),error.destroy()])
+    button.pack()
+    error.mainloop()
+try:
+    instrument = minimalmodbus.Instrument('/dev/ttyUSB0', 1)
+    instrument.serial.baudrate = 9600
+    instrument.serial.timeout = 1 
+    instrument.serial.bytesize = 8
+    instrument.serial.parity   = serial.PARITY_NONE
+    instrument.serial.stopbits = 1
+    instrument.serial.timeout  = 0.05   
+    instrument.mode = minimalmodbus.MODE_RTU
+    instrument.debug = False
+except:
+    raise_error()
 
+
+def reset_inventory():
+    try:
+        values = instrument.write_bit(3,1,5)
+    except IOError:
+        raise_error()
+        print("Failed")
+def mass_inventory():
+    try:
+        values = instrument.read_registers(262, 2, 3)
+        b = struct.pack('HH', values[0],values[1])
+        inventory = int(struct.unpack('f',b)[0])
+        return inventory
+    except IOError:
+        raise_error()
+        print("Failed")
+        return 0.0
+    
 def reset_total():
     try:
         global temp
@@ -58,31 +106,37 @@ def reset_total():
         values = instrument.write_bit(2,1,5)
 
     except IOError:
+        raise_error()
         print("Failed")
+    
 def mass_total():
     try:
-        global temp
-        
         values = instrument.read_registers(258, 2, 3)
         b = struct.pack('HH', values[0],values[1])
-        total = int(struct.unpack('f',b)[0])
+        total = float(struct.unpack('f',b)[0])
         return total
+        
 
     except IOError:
+        raise_error()
         print("Failed")
-       
+        return 0.0
+
     
 def flow_mass():
     try:
-        global temp
         
         values = instrument.read_registers(246, 2, 3)
         b = struct.pack('HH', values[0],values[1])
-        flow = int(struct.unpack('f',b)[0])
+        flow = float(struct.unpack('f',b)[0])
         return flow
 
     except IOError:
+        raise_error()
         print("Failed")
+        return 0.0
+
+
     
 def temp_set():
     try:
@@ -94,44 +148,50 @@ def temp_set():
         return temp
 
     except IOError:
+        raise_error()
         print("Failed")
+        return 0.0
+
 
 def get_filename():
     path =r"%s" %filepath
     return os.listdir(path)
-def create_file():
-    with open(filepath+datetime.datetime.now().strftime("%d-%B-%Y")+".csv","a" , newline = '') as fp:
-        a = csv.writer(fp, delimiter = ",")
-        data = [datetime.datetime.now().strftime('%H:%M'),amount,rate,temp,unit,total]
-        a.writerow(data)
-
-        #sending data to thingsspeak API
-
-        params = urllib.parse.urlencode({'field1':time,'field2':keytext,'field3':rate,'field4':temp,'key':key})
-        headers = {"Content-typZZe": "application/x-www-form-urlencoded", "Accept": "text/plain"}
-        conn = http.client.HTTPConnection("api.thingspeak.com",port = 80)
-        try:
-            conn.request("POST", "/update", params, headers)
-            response = conn.getrespsone()
-            res = response.read()
-            conn.close()
-        except:
-            print("connection failed")
+##def create_file():
+##    with open(filepath+datetime.datetime.now().strftime("%d-%B-%Y")+".csv","a" , newline = '') as fp:
+##        a = csv.writer(fp, delimiter = ",")
+##        data = [datetime.datetime.now().strftime('%H:%M'),amount,rate,temp,unit,total]
+##        a.writerow(data)
+##
+##        #sending data to thingsspeak API
+##
+##        params = urllib.parse.urlencode({'field1':time,'field2':keytext,'field3':rate,'field4':temp,'key':key})
+##        headers = {"Content-typZZe": "application/x-www-form-urlencoded", "Accept": "text/plain"}
+##        conn = http.client.HTTPConnection("api.thingspeak.com",port = 80)
+##        try:
+##            conn.request("POST", "/update", params, headers)
+##            response = conn.getrespsone()
+##            res = response.read()
+##            conn.close()
+##        except:
+##            print("connection failed")
 
 def popup_msg():
     popup = tk.Tk()
     popup.wm_title("Authentication")
-    popup.wm_geometry("400x600+120+0")
-
+##    popup.overrideredirect(True)
+##    popup.geometry("{0}x{1}+0+0".format(app.winfo_screenwidth(), app.winfo_screenheight()))
+    
     #msg
     labelframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
     labelframe.pack()
     label = tk.Label(labelframe, text = "Enter Pin", font = MEDIUM_FONT, relief = tk.RIDGE)
     label.grid(row = 0, column =0)
+
     #display
     s = ""
     ps = tk.Label(labelframe, text = s, font = MEDIUM_FONT, relief = tk.RIDGE)
     ps.grid(row=1, column =0)
+
     #keypad
 
     
@@ -157,7 +217,7 @@ def popup_msg():
         keytext = ''.join(dpress)
 
         string = ''.join(star)
-        ps.config(text = string)
+        ps['text'] = string
         if keytext == mng_pass:
             del dpress[:]
             bit =1
@@ -168,8 +228,8 @@ def popup_msg():
             bit =2
             popup.quit()
             popup.destroy()
-        elif len(keytext) == 4:
-            ps.config(text = "wrong text")
+        elif len(keytext) == 4 and keytext != rt_pass and keytext != mng_pass:
+            ps['text'] = "wrong pass"
 
     keypadframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
     keypadframe.pack()
@@ -206,7 +266,203 @@ def popup_msg():
             r += 1
 
     popup.mainloop()
+    
+def change_pass(string):
+    global rt_pass
+    global mng_pass
+    global c_bit
+    global cfrm_pass
+    global ini_ps
+    popup_msg()
+    popup = tk.Tk()
+    popup.wm_title("Pasword")
+##    popup.overrideredirect(True)
+##    popup.geometry("{0}x{1}+0+0".format(app.winfo_screenwidth(), app.winfo_screenheight()))
 
+    #msg
+    labelframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
+    labelframe.pack()
+    label = tk.Label(labelframe, text = "Enter Pin", font = MEDIUM_FONT, relief = tk.RIDGE)
+    label.grid(row = 0, column =0)
+    #display
+    s = ""
+    ps = tk.Label(labelframe, text = s, font = MEDIUM_FONT, relief = tk.RIDGE)
+    ps.grid(row=1, column =0)
+    #keypad
+    star = []
+    cfrm_pass = '0'
+    ini_ps = '1'
+    def clk(btn):
+        global rt_pass
+        global mng_pass
+        global c_bit
+        global cfrm_pass
+        global ini_ps
+        if btn == 'DEL' and len(dpress) > 0:
+            del dpress[-1]
+            del star[-1]
+        elif btn == 'Clear':
+            del dpress[:]
+            del star[:]
+        elif btn == 'Cancel':
+            del dpress[:]
+            popup.quit()
+            popup.destroy()
+
+        elif len(dpress) < 4 and btn != 'Del' and btn != 'Clear':
+            dpress.append('%s' %btn)
+            star.append('*')
+
+
+        if len(dpress) == 4 and c_bit == 0:
+            ini_ps = ''.join(dpress)
+            del dpress[:]
+            del star[:]
+            c_bit = 1
+        elif len(dpress) ==4 and c_bit ==1 :
+            cfrm_pass = ''.join(dpress)
+            del dpress[:]
+            del star[:]
+            c_bit = 0
+        string1 = ''.join(star)
+        ps['text'] = string1
+
+        if cfrm_pass == ini_ps and string == 'manage':
+            mng_pass = cfrm_pass
+            with open("./defaults.csv","w" , newline = '') as fp:
+                a = csv.writer(fp, delimiter = ",")
+                data = [mng_pass, rt_pass]
+                a.writerow(data)
+
+            popup.quit()
+            popup.destroy()
+        elif cfrm_pass == ini_ps and string == 'rate':
+            rt_pass = cfrm_pass
+            with open("./defaults.csv","w" , newline = '') as fp:
+                a = csv.writer(fp, delimiter = ",")
+                data = [mng_pass, rt_pass]
+                a.writerow(data)
+            popup.quit()
+            popup.destroy()
+            
+            
+
+    keypadframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
+    keypadframe.pack()
+
+    #print(dpress)
+    #typical keypad
+    btn_list = [
+            '7',  '8',  '9',
+            '4',  '5',  '6',
+            '1',  '2',  '3',
+            'Clear',  '0',  'Del',
+            'Cancel']
+    # create and position all buttons with a for-loop
+    # r, c used for row, column grid values
+    r = 1
+    c = 0
+    n = 0
+    # list(range()) needed for Python3
+    btn = list(range(len(btn_list)))
+    for label in btn_list:
+        # partial takes care of function and argument
+        # create the button
+        cmd = partial(clk,label)
+        btn[n] = tk.Button( keypadframe, text=label,font = SMALL_FONT , justify = LEFT,
+                           fg='white' ,bg='blue',command = cmd, width=6, height=4)
+        # position the button
+        btn[n].grid(row=r, column=c , padx =4 ,pady =4)
+        # increment button index
+        n += 1
+        # update row/column position
+        c += 1
+        if c == 3:
+            c = 0
+            r += 1
+
+    popup.mainloop()
+def change_factor():
+    popup = tk.Tk()
+    popup.wm_title("FACTOR")
+##    popup.overrideredirect(True)
+##    popup.geometry("{0}x{1}+0+0".format(app.winfo_screenwidth(), app.winfo_screenheight()))
+    
+    #msg
+    labelframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
+    labelframe.pack()
+    label = tk.Label(labelframe, text = "Callibration Factor", font = MEDIUM_FONT, relief = tk.RIDGE)
+    label.grid(row = 0, column =0)
+
+    #display
+    s = ""
+    ps = tk.Label(labelframe, text = s, font = MEDIUM_FONT, relief = tk.RIDGE)
+    ps.grid(row=1, column =0)
+
+    #keypad
+
+    
+    star = []
+    def click(btn):
+        global ltrfactor
+        if btn == 'DEL' and len(dpress) > 0:
+            del dpress[-1]
+        elif btn == 'Clear':
+            del dpress[:]
+        elif btn == 'Cancel':
+            del dpress[:]
+            popup.quit()
+            popup.destroy()
+
+        elif len(dpress) < 5 and btn != 'Del' and btn != 'Clear' and btn != 'Apply':
+            dpress.append('%s' %btn)
+        elif btn == 'Apply':
+            popup.quit()
+            popup.destroy()
+            with open("./defaults.csv","w" , newline = '') as fp:
+                a = csv.writer(fp, delimiter = ",")
+                data = [mng_pass, rt_pass, ltrfactor]
+                a.writerow(data)
+
+        keytext = ''.join(dpress)
+        ps['text'] = keytext
+        ltrfactor = float(keytext)
+
+    keypadframe = tk.LabelFrame(popup, text = "", font = SMALL_FONT)
+    keypadframe.pack()
+
+    #print(dpress)
+    #typical keypad
+    btn_list = [
+            '7',  '8',  '9',
+            '4',  '5',  '6',
+            '1',  '2',  '3',
+            '.',  '0',  'Del',
+            'Cancel', '', 'Apply']
+    # create and position all buttons with a for-loop
+    # r, c used for row, column grid values
+    r = 1
+    c = 0
+    n = 0
+    # list(range()) needed for Python3
+    btn = list(range(len(btn_list)))
+    for label in btn_list:
+        # partial takes care of function and argument
+        # create the button
+        cmd = partial(click,label)
+        btn[n] = tk.Button( keypadframe, text=label,font = SMALL_FONT , justify = LEFT,
+                           fg='white' ,bg='blue',command = cmd, width=6, height=4)
+        # position the button
+        btn[n].grid(row=r, column=c , padx =4 ,pady =4)
+        # increment button index
+        n += 1
+        # update row/column position
+        c += 1
+        if c == 3:
+            c = 0
+            r += 1
+
+    popup.mainloop()
         
 
 class DispenserGui(tk.Tk):
@@ -215,17 +471,32 @@ class DispenserGui(tk.Tk):
 
         tk.Tk.__init__(self, *args, **kwargs)
 
+
         tk.Tk.wm_title(self, "DispenserGUI")
         container = tk.Frame(self)
         container.pack(side="top", fill="both", expand = True)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
-
+        total_check = int(mass_inventory()/1000)+1
+##        print(total_check)
         if os.path.isfile(filepath +datetime.datetime.now().strftime("%d-%B-%Y")+".csv") == False:
             with open(filepath+datetime.datetime.now().strftime("%d-%B-%Y")+".csv" , "w", newline = "") as fp:
                 a = csv.writer(fp, delimiter = ",")
-                data = [["TIME","AMOUNT","RATE","TEMP","UNIT","GAS"]]
+                data = [["INDEX","TIME","AMOUNT","RATE","TEMP","UNIT","GAS"]]
                 a.writerows(data)
+        if os.path.isfile("./totalizer.csv") == False:
+            with open("./totalizer.csv" , "w", newline = "") as fp:
+                a = csv.writer(fp, delimiter = ",")
+                data = [["INDEX","TIME","AMOUNT","RATE","TEMP","UNIT","GAS"]]
+                a.writerows(data)
+        if os.path.isfile("./defaults.csv") == True:
+            global rt_pass
+            global mng_pass
+            df = pd.read_csv("./defaults.csv")
+            mng_pass = df.columns.values[0]
+            rt_pass = df.columns.values[1]
+            ltrfactor =df.columns.values[2]
+        #creating file with
         self.shared_data = {
             'Rate': tk.StringVar(),
             'Temp': tk.StringVar()}
@@ -249,19 +520,21 @@ class DispenserGui(tk.Tk):
         frame=self.frames[cont]
         if str(cont) == "<class '__main__.ManagerPage'>":
             popup_msg()
-            print(bit)
+##            print(bit)
             if bit == 1:
                 bit =0
-                print(bit)
+##                print(bit)
+                frame.event_generate("<<Manager>>")
                 frame.tkraise()
+                
             else:
                 return
         elif str(cont) == "<class '__main__.RatePage'>":
             popup_msg()
-            print(bit)
+##            print(bit)
             if bit == 2:
                 bit =0
-                print(bit)
+##                print(bit)
                 frame.tkraise()
             else:
                 return
@@ -275,6 +548,8 @@ class DispenserGui(tk.Tk):
                 frame.event_generate("<<Filling>>")
 
         elif str(cont) == "<class '__main__.StartPage'>":
+                global stop_bit
+                stop_bit = 1
                 frame.tkraise()
                 frame.event_generate("<<Start>>")
         else:    
@@ -302,6 +577,8 @@ class StartPage(tk.Frame):
         a.insert(0, '0')
         a.grid(row = 0, column =1)
 
+        dataframe = pd.read_csv(filepath + datetime.datetime.now().strftime('%d-%B-%Y')+".csv", index_col = 0)
+        self.v.set(int(dataframe['AMOUNT'].iloc[-1]))
         #keypad position
         kp = tk.LabelFrame(self, text="",fg='Yellow', bd=11 , bg= 'peachpuff')
         kp.place(x=690,y=260)
@@ -311,15 +588,18 @@ class StartPage(tk.Frame):
                 del dpress[-1]
             elif btn == 'Clear':
                 del dpress[:]
-                self.v.set('0')
             elif len(dpress) < 4 and btn != 'Del' and btn != 'Clear':
                 dpress.append('%s' %btn)
             keytext = ''.join(dpress)
             if keytext == '0':
                 del dpress[:]
                 self.v.set("0")
+            elif keytext == '':
+                self.v.set('0')
+##                self.v.set(str("{0:03d}".format(0)))
             else:
                 self.v.set(keytext)
+##                self.v.set(str("{0:03d}".format(int(keytext))))
         #print(dpress)
         #typical keypad
         btn_list = [
@@ -409,7 +689,7 @@ class StartPage(tk.Frame):
         #startfilling button
         fill_btn = tk.Button(self, text= "Start Filling" , font = MEDIUM_FONT,
                              fg = "white", bg= "green", width =14 , height =3,
-                             command= lambda : [controller.show_frame(FillingPage), clear_v()])
+                             command= lambda : [controller.show_frame(FillingPage)])
         fill_btn.place(x = 690, y=590)
 
         #Manager button
@@ -467,8 +747,8 @@ class StartPage(tk.Frame):
         self.bind("<<Start>>", self.on_show_frame)
 
     def on_show_frame(self,event):
-        print("working")
-        self.v.set('0')
+        global amount
+        self.v.set(amount)
         temp_set()
         self.t.set(temp)
         self.ra_unit["text"] = "Rs%s"%unit 
@@ -678,7 +958,7 @@ class FillingPage(tk.Frame):
         self.canvas.create_arc ( 15,5,135,45, start=0, extent=180 , outline = "lawn green", width =2)
         self.canvas.create_arc ( 15,290,135,260, start=0, extent=-180 , outline = "lawn green", width =2, fill = "lawn green")
 
-        img = Image.open('1.png')
+        img = Image.open('/home/pi/Desktop/dispenser/1.png')
         self.canvas.image = ImageTk.PhotoImage(img)
         self.canvas.create_image(52, 30, image=self.canvas.image, anchor='nw')
         
@@ -736,7 +1016,7 @@ class FillingPage(tk.Frame):
         self.low_lighton = "yellow"
 
         self.canvas.create_oval(70,190,120,240 , fill = "grey" , outline = "grey")
-        self.canvas.create_oval(73,193,117,237 , fill = self.low_lighton , outline = self.low_lighton )
+        self.canvas.create_oval(73,193,117,237 , fill = self.low_lightoff , outline = self.low_lightoff )
 
         self.med_lightoff = "tan4"
         self.med_lighton = "yellow"
@@ -759,53 +1039,160 @@ class FillingPage(tk.Frame):
         self.canvas.create_text(275,180,font = SMALL_FONT, text="HIGH")
 
         self.canvas.pack(fill=BOTH, expand=1)
-        
+        #stop button
+        self.stop_button = tk.Button( self, text="STOP" , font= MEDIUM_FONT, bg ="red", fg = "white" ,
+                             width = 14, height =3 ,command= lambda: [create_file(),self.controller.show_frame(StartPage)])
+        self.stop_button.place(x=20 , y=540)
+
+
+
         #clear_dpress()
         def clear_dpress():
             del dpress[:]
+        self.stop_button = tk.Button( self, text="STOP" , font= MEDIUM_FONT, bg ="red", fg = "white" ,
+                             width = 14, height =3 ,command= lambda: [self.controller.show_frame(StartPage)])
+        self.stop_button.place(x=20 , y=540)
 
-        #stop button
-        stop_button = tk.Button( self, text="STOP" , font= MEDIUM_FONT, bg ="red", fg = "white" ,
-                             width = 14, height =3 ,command= lambda: [create_file(),controller.show_frame(StartPage),clear_dpress()])
-        stop_button.place(x=20 , y=540)
+
         self.bind("<<Filling>>", self.on_show_frame)
         
     def on_show_frame(self,event):
-        global rate
         global total
         global amount
+        global valve_bit
+        global stop_bit
+        global total_check
+        global ltrfactor
+##        #destroy stop button
+##        self.stop_button.destroy()
+        #stop button
+        valve_bit = 0
+        stop_bit = 0
         #update unit kg or ltr
         self.gas_unit.config(text = unit)
         #status
-        self.status.set("LOW VAVLE OPEN")
-        #VALVE
-        self.canvas.create_oval(73,193,117,237 , fill = self.low_lighton , outline = self.low_lighton )
+        self.status.set("INITIALIZING")
         #reset main light
         self.canvas.create_oval(125,20,255,150 , fill = self.main_lightoff , outline = self.main_lightoff )
         #reset totalizer
         reset_total()
         self.fill_var.set('0')
-        flow = flow_mass()
+
         total =  float("{0:.3f}".format(mass_total()/1000))
         Amount = ''.join(dpress)
         amount = 0
-        print("Amount :%s"%Amount)
-        print("Rate %s" %rate)
+##        print("Amount :%s"%Amount)
+##        print("Rate %s" %rate)
         gas = float("{0:.3f}".format(float(Amount)/rate))
-        print("GAS : %s" %gas)
-        while(total <= gas and amount <= int(Amount)):
+##        print("GAS : %s" %gas)
+        time = datetime.datetime.now().strftime("%d-%B-%Y")
+        df = pd.read_csv(filepath + time +".csv",index_col=0)
+        df2 = pd.read_csv("./totalizer.csv", index_col = 0)
+##        print(df)
+        data = [datetime.datetime.now().strftime('%H:%M'),amount,rate,temp,unit,total]
+##        print(data)
+##        print(df.index)
+        df.loc[df.index.size] = data
+        df2.loc[df2.index.size] = data
 
-            total = float("{0:.4f}".format(mass_total()/1000))
+
+        
+        
+
+
+        
+        #BLINK
+        def empty():
+            for i in range(1000):
+                self.fill_var.set("")
+                self.gas_var.set("")
+                app.update()
+        def fill():
+            for i in range(1000):
+                self.fill_var.set(str("{0:04d}".format(amount)))
+                self.gas_var.set(str("{0:.2f}".format(total)))
+                app.update()
+        
+        for i in range(4):
+            empty()
+            fill()
+        #low valve open
+        self.status.set("LOW VAVLE OPEN")
+        gpio.output(2, gpio.HIGH)
+        self.canvas.create_oval(73,193,117,237 , fill = self.low_lighton , outline = self.low_lighton )
+        med_time = clock() + 0.3
+    
+        while(stop_bit == 0 and total <= gas and amount <= int(Amount) and amount <= 9999 ):
+            flow = flow_mass()
+##            print(flow)
+            total = float("{0:.4f}".format(mass_total()/1000))*ltrfactor
+            #creating pulse
+##            print(mass_inventory())
+            if int(mass_inventory()/1000) == total_check:
+                print("ON START")
+                total_check +=1
+                gpio.output(14, gpio.HIGH)
+                sleep(0.01)
+                gpio.output(14, gpio.LOW)
+                print("Creating Pulse")
             amount = int(total * rate)
-            self.fill_var.set(str(amount))
+            self.fill_var.set(str("{0:04d}".format(amount)))
             self.gas_var.set(str("{0:.2f}".format(total)))
+            df.iloc[-1, df.columns.get_loc("AMOUNT")] = amount
+            df.iloc[-1, df.columns.get_loc("GAS")] = float("{0:.2f}".format(total))
+            df2.iloc[-1, df.columns.get_loc("AMOUNT")] = amount
+            df2.iloc[-1, df.columns.get_loc("GAS")] = float("{0:.2f}".format(total))
+                
+            df.to_csv(filepath + time +".csv", ingore_index = True)
+            df2.to_csv("./totalizer.csv", ingore_index = True)
+            
+            
+            if flow_mass() <= valve_change_rate  and valve_bit  == 0 and clock() >= med_time :
+                #open medium valve close low vale
+                print("MEDIUM Valve Open")
+                gpio.output(2, gpio.LOW)
+                gpio.output(4, gpio.LOW)
+                gpio.output(3, gpio.HIGH)
+                self.status.set("MED VALVE OPEN")
+                self.canvas.create_oval(73,193,117,237 , fill = self.low_lightoff , outline = self.low_lightoff )
+                self.canvas.create_oval(163,193,207,237 , fill = self.med_lighton , outline = self.med_lighton )
+                valve_bit = 1
+                hi_time = clock() + 0.3
+            elif flow_mass() <= valve_change_rate  and valve_bit == 1 and hi_time > 0 and clock() >= hi_time:
+                #open high valve and close med valve
+                print("HIGH Valve Open")
+                gpio.output(2, gpio.LOW)
+                gpio.output(3, gpio.LOW)
+                gpio.output(4, gpio.HIGH)
+                self.status.set("HIGH VALVE OPEN")
+                self.canvas.create_oval(163,193,207,237 , fill = self.med_lightoff , outline = self.med_lightoff )
+                self.canvas.create_oval(253,193,297,237 , fill = self.hi_lighton , outline = self.hi_lighton )
+                valve_bit = 2
+                cut_off = clock() + 0.3
+            elif flow_mass() <= valve_change_rate  and valve_bit == 2 and cut_off > 0 and clock() >= cut_off:
+                stop_bit = 1
+                
             app.update()
             
+        #close all valves here
+        gpio.output(2, gpio.LOW)
+        gpio.output(3, gpio.LOW)
+        gpio.output(4, gpio.LOW)
+        self.canvas.create_oval(73,193,117,237 , fill = self.low_lightoff , outline = self.low_lightoff )
+        self.canvas.create_oval(163,193,207,237 , fill = self.med_lightoff , outline = self.med_lightoff )
+        self.canvas.create_oval(253,193,297,237 , fill = self.hi_lightoff , outline = self.hi_lightoff )
         #turning on main light
         self.canvas.create_oval(125,20,255,150 , fill = self.main_lighton , outline = self.main_lighton )
-        self.canvas.create_oval(73,193,117,237 , fill = self.low_lightoff , outline = self.low_lightoff )
         #status update
-        self.status.set("COMPLETE, SAFE TO DISCONNECT")
+        self.status.set("FILLING COMPLETE")
+        #blink
+        for i in range(4):
+            empty()
+            fill()
+        self.bind("<<onend>>", self.controller.show_frame(StartPage))
+        
+
+        
             
             
         
@@ -820,14 +1207,47 @@ class ManagerPage(tk.Frame):
         tk.Frame.__init__(self,parent)
 ##        label = tk.Label(self, text="Managing Page", font= LARGE_FONT)
 ##        label.pack(padx=10,pady=10)
-
+        #Exit button
         button1 = tk.Button( self, text="EXIT" , font= LARGE_FONT, bg= "red",fg = 'white',
                              command= lambda: controller.show_frame(StartPage))
-        button1.place(x=780,y=560)
+        button1.place(x=20,y=560)
+        button_frame=tk.LabelFrame(self , bd =10)
+        button_frame.place(x=20,y=400)
+        #pass change buttons
+        Rate_pass = tk.Button(button_frame, text = "Change Rt \nPasswrod", font = MEDIUM_FONT,
+                              command = lambda : change_pass('rate'))
+        Rate_pass.grid(row = 0 , column = 0)
+
+        Mng_pass = tk.Button(button_frame, text = "Change Mng \nPassword", font = MEDIUM_FONT,
+                             command = lambda : change_pass('manage'))
+        Mng_pass.grid(row = 1, column =0)
+
+        factor_frame =  tk.LabelFrame(self, text =  "factor area", bd = 10)
+        factor_frame.place(x = 890, y =20)
+        #update_factor
+        def update_factor():
+            self.factor_variable.set("{0:.3f}".format(ltrfactor))
+        #factor buttons
+        self.factor_variable = StringVar()
+        self.factor_variable.set("{0:.3f}".format(ltrfactor))
+
+        factor_entry = Entry(factor_frame , textvariable = self.factor_variable, font = MEDIUM_FONT, bg= 'black', fg = 'red', width = 5)
+        factor_entry.grid(row = 1 , column = 0)
+
+
+        factor_button = tk.Button(factor_frame, text = "Callibration \nFactor", font = SMALL_FONT,
+                                  command = lambda : [change_factor(), update_factor()])
+        factor_button.grid(row= 0 , column =0)
+
+
+        
+
+        
+        
 
         #File place
         file_label = tk.LabelFrame(self, text= "FILES" ,font =MEDIUM_FONT, bd=10)
-        file_label.place(x=20,y=20)
+        file_label.place(x=20,y=10)
 
         l= Listbox(file_label, height =5, selectmode = BROWSE , font = SMALL_FONT)
         l.grid(column=0, row=0, sticky=(N,S))
@@ -840,12 +1260,12 @@ class ManagerPage(tk.Frame):
 
 
         Totalizer_frame = tk.LabelFrame(self, text = "totalizer")
-        Totalizer_frame.place(x=780 , y=10)
+        Totalizer_frame.place(x=20 , y=150)
 
-        amount_label = tk.Label(Totalizer_frame, text = "Total Amount", font = MEDIUM_FONT, relief = tk.RIDGE)
+        amount_label = tk.Label(Totalizer_frame, text = "Amount", font = MEDIUM_FONT, relief = tk.RIDGE)
         amount_label.grid(row=0, column = 0, sticky = (N,E,S,W))
 
-        gaskg_label = tk.Label(Totalizer_frame, text = "Total Gas(KG)", font = MEDIUM_FONT, relief = tk.RIDGE)
+        gaskg_label = tk.Label(Totalizer_frame, text = "Gas(KG)", font = MEDIUM_FONT, relief = tk.RIDGE)
         gaskg_label.grid(row=1, column = 0, sticky = (N,E,S,W))
 
         self.amount = tk.Label(Totalizer_frame, text = "0", font = MEDIUM_FONT, relief = tk.RIDGE)
@@ -854,11 +1274,26 @@ class ManagerPage(tk.Frame):
         self.gaskg = tk.Label(Totalizer_frame, text = "0", font = MEDIUM_FONT, relief = tk.RIDGE)
         self.gaskg.grid(row=1, column = 1, sticky = (N,E,S,W))
 
+        self.totalizer_amount = tk.Label(Totalizer_frame, text = "Total Amount", font = MEDIUM_FONT, relief = tk.RIDGE)
+        self.totalizer_amount.grid(row=2, column = 0, sticky = (N,E,S,W))
+
+        gaskg_label = tk.Label(Totalizer_frame, text = "Total Gas(KG)", font = MEDIUM_FONT, relief = tk.RIDGE)
+        gaskg_label.grid(row=3, column = 0, sticky = (N,E,S,W))
+
+        df=pd.read_csv("./totalizer.csv")
+        self.totalizer_amount = df['AMOUNT'].sum()
+        self.totalizer_gas = df['GAS'].sum()
+
+        self.total_amount = tk.Label(Totalizer_frame, text = self.totalizer_amount , font = MEDIUM_FONT, relief = tk.RIDGE)
+        self.total_amount.grid(row=2, column = 1, sticky = (N,E,S,W))
+
+        self.total_gaskg = tk.Label(Totalizer_frame, text = "{0:.2f}".format(self.totalizer_gas) , font = MEDIUM_FONT, relief = tk.RIDGE)
+        self.total_gaskg.grid(row=3, column = 1, sticky = (N,E,S,W))
 
         canvas_frame =tk.LabelFrame(self)
         canvas_frame.place(x=260, y =18)
 
-        canvas_reader = tk.Canvas(canvas_frame, width=500, height=600, scrollregion = (0,0,500,10000))
+        canvas_reader = tk.Canvas(canvas_frame, width=610, height=600, scrollregion = (0,0,500,10000))
 
         scrollb=tk.Scrollbar(canvas_frame, orient = "vertical", command=canvas_reader.yview)
         scrollb.pack(side = "right", fill = "y")
@@ -866,7 +1301,7 @@ class ManagerPage(tk.Frame):
         canvas_reader['yscrollcommand'] = scrollb.set
         canvas_reader.pack(side = 'right', fill = 'y')
 
-        hide = tk.LabelFrame(canvas_reader, width =500, height=600)
+        hide = tk.LabelFrame(canvas_reader, width =610, height=700)
         hide.place(x=0,y=0)
         
         def callback():
@@ -908,8 +1343,21 @@ class ManagerPage(tk.Frame):
 
         button = tk.Button(file_label, text= "show", command = callback)
         button.grid(row=0, column=2)
+        self.bind("<<Manager>>", self.on_manager_frame)
+    def on_manager_frame(self,event):
+        df=pd.read_csv("./totalizer.csv")
+        self.totalizer_amount = df['AMOUNT'].sum()
+        self.totalizer_gas = df['GAS'].sum()
+
+        self.total_amount['text'] = int(self.totalizer_amount)
+        print(self.totalizer_amount)
+        self.total_gaskg['text'] = "{0:.2f}".format(self.totalizer_gas)
+        print(self.totalizer_gas)
                 
 
 app = DispenserGui()
+##app.overrideredirect(1)
 app.wm_geometry("1024x768+0+0")
+##app.geometry("{0}x{1}+0+0".format(app.winfo_screenwidth(), app  .winfo_screenheight()))
 app.mainloop()
+gpio.cleanup()
